@@ -8,11 +8,11 @@ elrond_wasm::derive_imports!();
 mod contract_data;
 
 #[elrond_wasm::contract]
-pub trait TokenRelease{
+pub trait TokenRelease {
     // The SC initializes with the setup period started. After the initial setup, the SC offers a function that ends the setup period. 
     // There is no function to start the setup period back on, so once the setup period is ended, it cannot be changed.
     #[init]
-    fn init(&self, token_identifier: TokenIdentifier) -> SCResult<()>{
+    fn init(&self, token_identifier: TokenIdentifier) -> SCResult<()> {
         let my_address: ManagedAddress = self.blockchain().get_caller();
         let activation_timestamp = self.blockchain().get_block_timestamp();
         require!(token_identifier.is_valid_esdt_identifier(), "Invalid token provided");
@@ -36,11 +36,11 @@ pub trait TokenRelease{
         schedule_amount: BigUint,
         schedule_period: u64,
         schedule_ticks: u64,
-    ) -> SCResult<()>{
+    ) -> SCResult<()> {
         only_owner!(self, "Permission denied");
         self.require_setup_period_live()?;
 
-        let new_group = ScheduleType{
+        let new_group = ScheduleType {
             schedule_total_amount,
             schedule_is_fixed_amount,
             schedule_percent,
@@ -80,13 +80,11 @@ pub trait TokenRelease{
             let mut address_groups = Vec::new();
             address_groups.push(group_identifier);
             self.whitelist_address(&address).set(&address_groups);
-        }
-        else {
+        } else {
             let mut verifiy_address = self.whitelist_address(&address).get();
-            if verifiy_address.iter().any(|i| i== &group_identifier){
-                //address already contains this group
-            }
-            else {
+            if verifiy_address.iter().any(|i| i== &group_identifier) {
+                //address already contains this group.
+            } else {
                 verifiy_address.push(group_identifier);
                 self.whitelist_address(&address).set(&verifiy_address);
             };
@@ -165,13 +163,13 @@ pub trait TokenRelease{
         self.claimed_balance(&caller).set(&current_balance);
 
         Ok(current_claimable_amount)
-        }
+    }
 
     // views
 
     //Offers only the user the possibility to check the new requested address 
     #[view]
-    fn verifiy_address_change(&self) -> ManagedAddress{
+    fn verifiy_address_change(&self) -> ManagedAddress {
         let user_address: ManagedAddress = self.blockchain().get_caller();
         let new_address = self.change_address(&user_address).get();
 
@@ -180,15 +178,14 @@ pub trait TokenRelease{
 
     //Offers only the user the possibility to check the new requested address 
     #[view]
-    fn verifiy_claimable_tokens(&self) -> BigUint{
+    fn verify_claimable_tokens(&self) -> BigUint {
         let caller = self.blockchain().get_caller();
         let total_claimable_amount = self.calculate_claimable_tokens(&caller);
         let current_balance = self.claimed_balance(&caller).get();
 
         if total_claimable_amount > current_balance{
             total_claimable_amount - current_balance
-        }
-        else {
+        } else {
             BigUint::zero()
         }
     }
@@ -201,10 +198,7 @@ pub trait TokenRelease{
         self.send().direct(&address, &token_identifier, 0, &amount, &[]);
     }
 
-    fn calculate_claimable_tokens(
-        &self,
-        address: &ManagedAddress,
-    ) -> (BigUint) {
+    fn calculate_claimable_tokens(&self, address: &ManagedAddress) -> (BigUint) {
         let starting_timestamp = self.activation_timestamp().get();
         let current_timestamp = self.blockchain().get_block_timestamp();
         let address_groups = self.whitelist_address(&address).get();
@@ -221,8 +215,7 @@ pub trait TokenRelease{
                     if current_timestamp - starting_timestamp >= schedule_type.schedule_period * ticks {
                         if schedule_type.schedule_is_fixed_amount{ //calculate fixed amount
                             claimable_amount += &schedule_type.schedule_amount;
-                        }
-                        else { //calculate percentage
+                        } else { //calculate percentage
                             claimable_amount += &schedule_type.schedule_total_amount * (schedule_type.schedule_percent as u64) / (100 as u64);                           
                         }
                     }                   
