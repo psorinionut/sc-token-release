@@ -1,0 +1,24 @@
+{
+    "name": "set roles",
+    "steps": [
+        {
+            "step": "setState",
+            "accounts": {
+                "sc:token_release_contract": {
+                    "nonce": "0",
+                    "esdt": {
+                        "str:MyFirstToken-101": {
+                            "roles": [
+                                "ESDTRoleLocalMint",
+                                "ESDTRoleLocalBurn"
+                            ]
+                        }
+                    },
+                    "storage": {},
+                    "owner": "address:my_address",
+                    "code": "file:../output/sc-token-release.wasm"
+                }
+            }
+        }
+    ]
+}
