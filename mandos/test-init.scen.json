@@ -4,24 +4,30 @@
       {
         "step": "setState",
         "accounts": {
-          "address:my_address": {
+          "address:owner": {
             "nonce": "0",
             "balance": "1,000,000"
           }
         },
         "newAddresses": [
           {
-            "creatorAddress": "address:my_address",
+            "creatorAddress": "address:owner",
             "creatorNonce": "0",
             "newAddress": "sc:token_release_contract"
           }
         ]
       },
       {
+        "step": "setState",
+        "currentBlockInfo": {
+            "blockTimestamp": "1"
+        }
+      },
+      {
         "step": "scDeploy",
         "txId": "deploy-contract",
         "tx": {
-          "from": "address:my_address",
+          "from": "address:owner",
           "value": "0",
           "contractCode": "file:../output/sc-token-release.wasm",
           "arguments": [
@@ -33,7 +39,6 @@
         "expect": {
             "out": [],
             "status": "",
-            "logs": [],
             "gas": "*",
             "refund": "*"
         }
@@ -41,7 +46,7 @@
       {
         "step": "checkState",
         "accounts": {
-          "address:my_address": {
+          "address:owner": {
             "nonce": "1",
             "balance": "1,000,000"
           },
@@ -49,7 +54,6 @@
             "nonce": "0",
             "balance": "0",
             "storage": {
-                "str:tokenIdentifier":"str:MyFirstToken-101"
             },
             "code": "file:../output/sc-token-release.wasm"
           }
