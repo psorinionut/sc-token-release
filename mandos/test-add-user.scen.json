@@ -15,11 +15,17 @@
             "address:user1": {
                 "nonce": "0",
                 "balance": "0",
+                "esdt": {
+                  "str:MyFirstToken-101": "0"
+              },
                 "storage": {}
             },
             "address:user2": {
                 "nonce": "0",
                 "balance": "0",
+                "esdt": {
+                  "str:MyFirstToken-101": "0"
+              },
                 "storage": {}
             }
         }

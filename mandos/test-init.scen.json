@@ -54,6 +54,7 @@
             "nonce": "0",
             "balance": "0",
             "storage": {
+              "str:activationTimestamp":"str:MyFirstToken-101"
             },
             "code": "file:../output/sc-token-release.wasm"
           }
