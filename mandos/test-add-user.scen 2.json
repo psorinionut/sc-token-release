@@ -37,7 +37,7 @@
           "from": "address:owner",
           "to": "sc:token_release_contract",
           "value": "0",
-          "function": "addUserGroup",
+          "function": "addUserGroups",
           "arguments": [
               "address:user1",
               "str:MyFirstGroup"
@@ -59,7 +59,7 @@
           "from": "address:owner",
           "to": "sc:token_release_contract",
           "value": "0",
-          "function": "addUserGroup",
+          "function": "addUserGroups",
           "arguments": [
               "address:user2",
               "str:MyFirstGroup"

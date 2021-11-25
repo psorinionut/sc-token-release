@@ -12,11 +12,13 @@
         "from": "address:owner",
         "to": "sc:token_release_contract",
         "value": "0",
-        "function": "addPercentageBasedGroup",
+        "function": "addGroup",
         "arguments": [
             "str:MyFirstGroup",
             "10000",
+            "0",
             "25",
+            "0",
             "3600",
             "4"
         ],

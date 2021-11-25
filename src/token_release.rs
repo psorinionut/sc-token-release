@@ -1,11 +1,13 @@
 #![no_std]
 
-use crate::contract_data::ScheduleType;
-
 elrond_wasm::imports!();
 elrond_wasm::derive_imports!();
 
 mod contract_data;
+use contract_data::Schedule;
+use contract_data::UnlockType;
+
+const PERCENTAGE_TOTAL: u64 = 100;
 
 #[elrond_wasm::contract]
 pub trait TokenRelease {
@@ -13,10 +15,8 @@ pub trait TokenRelease {
     // There is no function to start the setup period back on, so once the setup period is ended, it cannot be changed.
     #[init]
     fn init(&self, token_identifier: TokenIdentifier) -> SCResult<()> {
-        let activation_timestamp = self.blockchain().get_block_timestamp();
         require!(token_identifier.is_valid_esdt_identifier(), "Invalid token provided");
         self.token_identifier().set(&token_identifier);
-        self.activation_timestamp().set(&activation_timestamp);
         self.setup_period_status().set(&true);
         Ok(())
     }
@@ -26,11 +26,11 @@ pub trait TokenRelease {
     // Workflow
     // First, all groups are defined. After that, an address can be assigned as many groups as needed
     #[only_owner]
-    #[endpoint(addGroup)]
-    fn add_group(&self, group_identifier: ManagedBuffer, 
+    #[endpoint(addFixedAmountGroup)]
+    fn add_fixed_amount_group(
+        &self, 
+        group_identifier: ManagedBuffer, 
         group_total_amount: BigUint,
-        is_fixed_amount: bool,
-        group_unlock_percent: u8,
         period_unlock_amount: BigUint,
         release_period: u64,
         release_ticks: u64,
@@ -48,31 +48,57 @@ pub trait TokenRelease {
             group_total_amount > BigUint::zero(),
             "The schedule must have a positive number of total tokens released"
         );
-        if is_fixed_amount {
-            require!(
-                period_unlock_amount.clone() * BigUint::from(release_ticks) == group_total_amount,
-                "The total number of tokens is invalid"
-            );
-        } else {
-            require!(
-                (group_unlock_percent as u64) * release_ticks == (100 as u64),
-                "The final percentage is invalid"
-            );
-        }
+        require!(
+            period_unlock_amount.clone() * BigUint::from(release_ticks) == group_total_amount,
+            "The total number of tokens is invalid"
+        );
 
-        let new_group = ScheduleType {
+        self.token_total_supply().update(|total| *total += &group_total_amount);
+        let unlock_type = UnlockType::FixedAmount {period_unlock_amount, release_period, release_ticks};
+        let new_schedule = Schedule {
             group_total_amount,
-            is_fixed_amount,
-            group_unlock_percent,
-            period_unlock_amount,
-            release_period,
-            release_ticks
+            unlock_type
         };
+        self.group_schedule(&group_identifier).set(&new_schedule);
 
-        let mut token_supply = self.token_total_supply().get();
-        token_supply += &new_group.group_total_amount;
-        self.token_total_supply().set(&token_supply);
-        self.group_schedule(&group_identifier).set(&new_group);
+        Ok(())
+    }
+
+    #[only_owner]
+    #[endpoint(addPercentageBasedGroup)]
+    fn add_percentage_based_group(
+        &self, 
+        group_identifier: ManagedBuffer, 
+        group_total_amount: BigUint,
+        period_unlock_percentage: u8,
+        release_period: u64,
+        release_ticks: u64,
+    ) -> SCResult<()> {
+        self.require_setup_period_live()?;
+        require!(
+            self.group_schedule(&group_identifier).is_empty(),
+            "The group already exists"
+        );
+        require!(
+            release_ticks > (0 as u64),
+            "The schedule must have at least 1 unlock period"
+        );
+        require!(
+            group_total_amount > BigUint::zero(),
+            "The schedule must have a positive number of total tokens released"
+        );
+        require!(
+            (period_unlock_percentage as u64) * release_ticks == PERCENTAGE_TOTAL,
+            "The final percentage is invalid"
+        );
+
+        self.token_total_supply().update(|total| *total += &group_total_amount);
+        let unlock_type = UnlockType::Percentage {period_unlock_percentage, release_period, release_ticks};
+        let new_schedule = Schedule {
+            group_total_amount,
+            unlock_type
+        };
+        self.group_schedule(&group_identifier).set(&new_schedule);
 
         Ok(())
     }
@@ -86,11 +112,8 @@ pub trait TokenRelease {
             "The group does not exist"
         );
  
-        let group = self.group_schedule(&group_identifier).get();
-        let mut token_supply = self.token_total_supply().get();
-        token_supply -= &group.group_total_amount;
-        self.token_total_supply().set(&token_supply);
-
+        let schedule = self.group_schedule(&group_identifier).get();
+        self.token_total_supply().update(|total| *total -= &schedule.group_total_amount);
         self.group_schedule(&group_identifier).clear();
         self.users_in_group(&group_identifier).clear();
         Ok(())
@@ -105,19 +128,12 @@ pub trait TokenRelease {
             "The group does not exist"
         );
 
-        if !self.user_groups(&address).is_empty() {
-            let mut verify_address = self.user_groups(&address).get();
-            if !verify_address.iter().any(|i| i == &group_identifier) {
-                self.update_users_in_group(&group_identifier, true);
-                verify_address.push(group_identifier);
-                self.user_groups(&address).set(&verify_address);
-            };
-        } else {
-            self.update_users_in_group(&group_identifier, true);
-            let mut address_groups = Vec::new();
-            address_groups.push(group_identifier);
-            self.user_groups(&address).set(&address_groups);
-        };
+        self.user_groups(&address).update(|groups| {
+            if !groups.contains(&group_identifier) {
+                self.users_in_group(&group_identifier).update(|users_in_group_no| *users_in_group_no += 1);
+                groups.push(group_identifier);
+            }
+        });
 
         Ok(())
     }
@@ -133,7 +149,7 @@ pub trait TokenRelease {
         let address_groups = self.user_groups(&address).get();
         for group_identifier in address_groups.iter()
         {
-            self.update_users_in_group(&group_identifier, false);
+            self.users_in_group(&group_identifier).update(|users_in_group_no| *users_in_group_no -= 1);
         }
         self.user_groups(&address).clear();
         self.claimed_balance(&address).clear();
@@ -185,6 +201,8 @@ pub trait TokenRelease {
         self.setup_period_status().set(&false);
         let total_mint_tokens = self.token_total_supply().get();
         self.mint_all_tokens(&token_identifier, &total_mint_tokens);
+        let activation_timestamp = self.blockchain().get_block_timestamp();
+        self.activation_timestamp().set(&activation_timestamp);
         Ok(())
     }
 
@@ -193,35 +211,30 @@ pub trait TokenRelease {
         self.require_setup_period_ended()?;
         let token_identifier = self.token_identifier().get();
         let caller = self.blockchain().get_caller();
-        let total_claimable_amount = self.calculate_claimable_tokens(&caller);
-        let mut current_balance = self.claimed_balance(&caller).get();
-        require!(&total_claimable_amount > &current_balance, "This address cannot currently claim any more tokens");
-        let current_claimable_amount = total_claimable_amount - &current_balance;
+        let current_claimable_amount = self.get_claimable_tokens(&caller);
+        
+        require!(
+            current_claimable_amount > BigUint::zero(), 
+            "This address cannot currently claim any more tokens"
+        );
         self.send_tokens(&token_identifier, &caller, &current_claimable_amount);
-        current_balance += &current_claimable_amount;
-        self.claimed_balance(&caller).set(&current_balance);
+        self.claimed_balance(&caller).update(|current_balance| *current_balance += &current_claimable_amount);
 
         Ok(current_claimable_amount)
     }
 
     // views
 
-    //Offers only the user the possibility to check the new requested address 
     #[view]
-    fn verify_address_change(&self) -> ManagedAddress {
-        let user_address = self.blockchain().get_caller();
-        let new_address = self.address_change_request(&user_address).get();
-
+    fn verify_address_change(&self, address: &ManagedAddress) -> ManagedAddress {
+        let new_address = self.address_change_request(&address).get();
         new_address
     }
 
-    //Offers only the user the possibility to check how many tokens he can claim at the time of the request
     #[view]
-    fn verify_claimable_tokens(&self) -> BigUint {
-        let caller = self.blockchain().get_caller();
-        let total_claimable_amount = self.calculate_claimable_tokens(&caller);
-        let current_balance = self.claimed_balance(&caller).get();
-
+    fn get_claimable_tokens(&self, address: &ManagedAddress) -> BigUint {
+        let total_claimable_amount = self.calculate_claimable_tokens(&address);
+        let current_balance = self.claimed_balance(&address).get();
         if total_claimable_amount > current_balance {
             total_claimable_amount - current_balance
         } else {
@@ -230,14 +243,6 @@ pub trait TokenRelease {
     }
 
     // private functions
-
-    fn send_tokens(&self, token_identifier: &TokenIdentifier, address: &ManagedAddress, amount: &BigUint) {
-        self.send().direct(&address, &token_identifier, 0, &amount, &[]);
-    }
-
-    fn mint_all_tokens(&self, token_identifier: &TokenIdentifier, amount: &BigUint) {
-        self.send().esdt_local_mint(&token_identifier, 0, &amount);
-    }
 
     fn calculate_claimable_tokens(&self, address: &ManagedAddress) -> (BigUint) {
         let starting_timestamp = self.activation_timestamp().get();
@@ -249,23 +254,36 @@ pub trait TokenRelease {
         // Compute the total claimable amount at the time of the request, for all of the user groups
         for group_identifier in address_groups.iter()
         {
-            let schedule_type = self.group_schedule(&group_identifier).get();
-            let users_in_group_no = self.users_in_group(&group_identifier).get();
-            
+            let schedule = self.group_schedule(&group_identifier).get();
+            let users_in_group_no = self.users_in_group(&group_identifier).get();            
             let time_passed = current_timestamp - starting_timestamp;
-            let mut periods_passed = time_passed / schedule_type.release_period;
 
-            // Check if the user claims the tokens after (max periods no + n) passed, to compute the total amount based on the max number of periods
-            // This means that the user cannot claim more than his total allocation and that the group total amount cannot be overpassed
-            if periods_passed > schedule_type.release_ticks {
-                periods_passed = schedule_type.release_ticks
-            }
-
-            if periods_passed > 0 {
-                if schedule_type.is_fixed_amount {
-                    claimable_amount +=  BigUint::from(periods_passed) * &schedule_type.period_unlock_amount / BigUint::from(users_in_group_no);
-                } else {
-                    claimable_amount +=  BigUint::from(periods_passed) * &schedule_type.group_total_amount * (schedule_type.group_unlock_percent as u64) / (100 as u64) / BigUint::from(users_in_group_no);                           
+            match schedule.unlock_type {
+                UnlockType::FixedAmount { period_unlock_amount, release_period, release_ticks } => {
+                    let mut periods_passed = time_passed / release_period;
+                    if periods_passed == 0 {
+                        continue;
+                    }
+                    if periods_passed > release_ticks {
+                        periods_passed = release_ticks
+                    }
+                    claimable_amount +=  BigUint::from(periods_passed) 
+                        * period_unlock_amount 
+                        / BigUint::from(users_in_group_no);
+                },
+                UnlockType::Percentage { period_unlock_percentage, release_period, release_ticks } => {
+                    let mut periods_passed = time_passed / release_period;
+                    if periods_passed == 0 {
+                        continue;
+                    }
+                    if periods_passed > release_ticks {
+                        periods_passed = release_ticks
+                    }
+                    claimable_amount +=  BigUint::from(periods_passed) 
+                        * &schedule.group_total_amount 
+                        * (period_unlock_percentage as u64) 
+                        / PERCENTAGE_TOTAL 
+                        / BigUint::from(users_in_group_no); 
                 }
             }
         }
@@ -273,15 +291,12 @@ pub trait TokenRelease {
         claimable_amount
     }
 
-    fn update_users_in_group(&self, group_identifier: &ManagedBuffer, user_is_added: bool) {
-        let mut users_in_group_no = self.users_in_group(&group_identifier).get();
-        if user_is_added {
-            users_in_group_no += &1;
-        } else {
-            users_in_group_no -= &1;
-        }
-        
-        self.users_in_group(&group_identifier).set(&users_in_group_no);
+    fn send_tokens(&self, token_identifier: &TokenIdentifier, address: &ManagedAddress, amount: &BigUint) {
+        self.send().direct(&address, &token_identifier, 0, &amount, &[]);
+    }
+
+    fn mint_all_tokens(&self, token_identifier: &TokenIdentifier, amount: &BigUint) {
+        self.send().esdt_local_mint(&token_identifier, 0, &amount);
     }
 
     fn require_setup_period_live(&self) -> SCResult<()> {
@@ -314,7 +329,6 @@ pub trait TokenRelease {
         Ok(())
     }
 
-
     // storage
 
     #[storage_mapper("activationTimestamp")]
@@ -335,7 +349,7 @@ pub trait TokenRelease {
     fn address_change_request(&self, address: &ManagedAddress) -> SingleValueMapper<ManagedAddress>;
 
     #[storage_mapper("groupSchedule")]
-    fn group_schedule(&self, group_identifier: &ManagedBuffer) -> SingleValueMapper<ScheduleType<Self::Api>>;  
+    fn group_schedule(&self, group_identifier: &ManagedBuffer) -> SingleValueMapper<Schedule<Self::Api>>;  
     
     #[storage_mapper("userGroups")]
     fn user_groups(&self, address: &ManagedAddress) -> SingleValueMapper<Vec<ManagedBuffer>>;
@@ -345,5 +359,5 @@ pub trait TokenRelease {
 
     #[storage_mapper("claimedBalance")]
     fn claimed_balance(&self, address: &ManagedAddress) -> SingleValueMapper<BigUint>;
-
+    
 }
