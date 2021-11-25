@@ -265,7 +265,7 @@ pub trait TokenRelease {
                         continue;
                     }
                     if periods_passed > release_ticks {
-                        periods_passed = release_ticks
+                        periods_passed = release_ticks;
                     }
                     claimable_amount +=  BigUint::from(periods_passed) 
                         * period_unlock_amount 
@@ -277,7 +277,7 @@ pub trait TokenRelease {
                         continue;
                     }
                     if periods_passed > release_ticks {
-                        periods_passed = release_ticks
+                        periods_passed = release_ticks;
                     }
                     claimable_amount +=  BigUint::from(periods_passed) 
                         * &schedule.group_total_amount 
